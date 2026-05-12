@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tentacle Entity — Bioluminescent Deep</title>
+    <style>
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #hint {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(180, 100, 255, 0.45);
+            font-size: 13px;
+            letter-spacing: 2px;
+            pointer-events: none;
+            text-transform: uppercase;
+            animation: fadeHint 6s ease forwards;
+        }
+
+        @keyframes fadeHint {
+            0% {
+                opacity: 0;
+            }
+
+            20% {
+                opacity: 1;
+            }
+
+            80% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+    <div id="hint">Move your cursor to awaken the entity</div>
+    <script>
+        (() => {
+            'use strict';
+
+            // ─── Canvas Setup ────────────────────────────────────────────────────────────
+            const canvas = document.getElementById('c');
+            const ctx = canvas.getContext('2d');
+            let W, H;
+
+            function resize() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ─── Mouse / Target ──────────────────────────────────────────────────────────
+            const mouse = { x: W / 2, y: H / 2 };
+            const velocity = { x: 0, y: 0 };
+            let lastMX = W / 2, lastMY = H / 2;
+            let mouseSpeed = 0;
+
+            window.addEventListener('mousemove', e => {
+                mouse.x = e.clientX;
+                mouse.y = e.clientY;
+            });
+            window.addEventListener('touchmove', e => {
+                e.preventDefault();
+                mouse.x = e.touches[0].clientX;
+                mouse.y = e.touches[0].clientY;
+            }, { passive: false });
+
+            // ─── Starfield ───────────────────────────────────────────────────────────────
+            const NUM_STARS = 220;
+            const stars = Array.from({ length: NUM_STARS }, () => ({
+                x: Math.random() * 2000,
+                y: Math.random() * 2000,
+                r: Math.random() * 1.2 + 0.2,
+                a: Math.random() * 0.4 + 0.05,
+                twinkleSpeed: Math.random() * 0.02 + 0.005,
+                twinkleOffset: Math.random() * Math.PI * 2,
+            }));
+
+            function drawStars(t) {
+                for (const s of stars) {
+                    const alpha = s.a + Math.sin(t * s.twinkleSpeed + s.twinkleOffset) * 0.06;
+                    ctx.beginPath();
+                    ctx.arc(s.x % W, s.y % H, s.r, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(210, 190, 255, ${Math.max(0, alpha)})`;
+                    ctx.fill();
+                }
+            }
+
+            // ─── Head / Core ─────────────────────────────────────────────────────────────
+            const head = { x: W / 2, y: H / 2, vx: 0, vy: 0 };
+            // Higher = snappier chase
+            const CHASE_EASE = 0.13;
+            const FRICTION = 0.78;
+
+            function updateHead() {
+                const dx = mouse.x - head.x;
+                const dy = mouse.y - head.y;
+                head.vx += dx * CHASE_EASE;
+                head.vy += dy * CHASE_EASE;
+                head.vx *= FRICTION;
+                head.vy *= FRICTION;
+                head.x += head.vx;
+                head.y += head.vy;
+            }
+
+            function drawCore(t) {
+                const pulse = 1 + Math.sin(t * 0.04) * 0.08;
+
+                // Outer aura
+                let g = ctx.createRadialGradient(head.x, head.y, 2, head.x, head.y, 60 * pulse);
+                g.addColorStop(0, 'rgba(220, 180, 255, 0.18)');
+                g.addColorStop(0.5, 'rgba(140, 60, 230, 0.08)');
+                g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.beginPath();
+                ctx.arc(head.x, head.y, 60 * pulse, 0, Math.PI * 2);
+                ctx.fillStyle = g;
+                ctx.fill();
+
+                // Inner glow
+                g = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 18 * pulse);
+                g.addColorStop(0, 'rgba(255, 245, 255, 1)');
+                g.addColorStop(0.3, 'rgba(200, 150, 255, 0.9)');
+                g.addColorStop(0.7, 'rgba(120, 40, 220, 0.5)');
+                g.addColorStop(1, 'rgba(80, 0, 180, 0)');
+                ctx.beginPath();
+                ctx.arc(head.x, head.y, 18 * pulse, 0, Math.PI * 2);
+                ctx.fillStyle = g;
+                ctx.fill();
+            }
+
+            // ─── Tentacle Physics (Follow-the-Leader) ───────────────────────────────────
+            const NUM_TENTACLES = 24;
+            const SEGMENTS = 22;
+            const SEG_LEN = 18;
+
+            function makeTentacle(index) {
+                const angleOffset = (index / NUM_TENTACLES) * Math.PI * 2;
+                const segments = [];
+                for (let i = 0; i < SEGMENTS; i++) {
+                    segments.push({
+                        x: head.x + Math.cos(angleOffset) * i * SEG_LEN,
+                        y: head.y + Math.sin(angleOffset) * i * SEG_LEN,
+                        vx: 0,
+                        vy: 0,
+                    });
+                }
+                return {
+                    segments,
+                    angleOffset,
+                    // Each tentacle has slight personality in wiggle
+                    wiggleFreq: 0.025 + Math.random() * 0.015,
+                    wiggleAmp: 0.4 + Math.random() * 0.5,
+                    wigglePhase: Math.random() * Math.PI * 2,
+                    lengthScale: 0.75 + Math.random() * 0.5,
+                };
+            }
+
+            const tentacles = Array.from({ length: NUM_TENTACLES }, (_, i) => makeTentacle(i));
+
+            function updateTentacle(t, tentacle) {
+                const { segments, angleOffset, wiggleFreq, wiggleAmp, wigglePhase, lengthScale } = tentacle;
+                const segLen = SEG_LEN * lengthScale;
+
+                // Root segment attaches to head with idle wave offset
+                const idleWave = Math.sin(t * wiggleFreq + wigglePhase) * wiggleAmp * (1 - Math.min(mouseSpeed / 15, 1) * 0.7);
+                const rootAngle = angleOffset + idleWave;
+                segments[0].x = head.x + Math.cos(rootAngle) * 6;
+                segments[0].y = head.y + Math.sin(rootAngle) * 6;
+
+                // Follow-the-leader: each segment chases the one before it
+                for (let i = 1; i < SEGMENTS; i++) {
+                    const prev = segments[i - 1];
+                    const curr = segments[i];
+
+                    // Tiny perpendicular wiggle grows toward tip
+                    const wiggleInfluence = (i / SEGMENTS);
+                    const wave = Math.sin(t * wiggleFreq * 1.4 + i * 0.5 + wigglePhase) * wiggleAmp * wiggleInfluence * 8;
+
+                    const angle = Math.atan2(curr.y - prev.y, curr.x - prev.x);
+                    // Soft spring: pull toward ideal distance
+                    const tx = prev.x + Math.cos(angle) * segLen;
+                    const ty = prev.y + Math.sin(angle) * segLen;
+
+                    const perp = angle + Math.PI / 2;
+                    curr.vx = (curr.vx + (tx - curr.x) * 0.35 + Math.cos(perp) * wave * 0.15) * 0.65;
+                    curr.vy = (curr.vy + (ty - curr.y) * 0.35 + Math.sin(perp) * wave * 0.15) * 0.65;
+                    curr.x += curr.vx;
+                    curr.y += curr.vy;
+                }
+            }
+
+            // ─── Tentacle Rendering ──────────────────────────────────────────────────────
+            function drawTentacle(t, tentacle) {
+                const { segments } = tentacle;
+
+                // Build smooth catmull-rom path
+                ctx.save();
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                const n = segments.length;
+
+                // Draw layered glow: thick → thin, bright → transparent
+                const layers = [
+                    { width: 7, alpha: 0.10, color: [200, 140, 255] },
+                    { width: 4.5, alpha: 0.20, color: [170, 90, 255] },
+                    { width: 2.5, alpha: 0.55, color: [210, 160, 255] },
+                    { width: 1.2, alpha: 0.90, color: [240, 220, 255] },
+                ];
+
+                for (const layer of layers) {
+                    ctx.beginPath();
+                    ctx.moveTo(segments[0].x, segments[0].y);
+
+                    for (let i = 1; i < n - 1; i++) {
+                        const mx = (segments[i].x + segments[i + 1].x) / 2;
+                        const my = (segments[i].y + segments[i + 1].y) / 2;
+                        ctx.quadraticCurveTo(segments[i].x, segments[i].y, mx, my);
+                    }
+                    ctx.lineTo(segments[n - 1].x, segments[n - 1].y);
+
+                    // Gradient along length using a line gradient
+                    const grad = ctx.createLinearGradient(
+                        segments[0].x, segments[0].y,
+                        segments[n - 1].x, segments[n - 1].y
+                    );
+                    const [r, g, b] = layer.color;
+                    grad.addColorStop(0, `rgba(${r},${g},${b},${layer.alpha * 0.9})`);
+                    grad.addColorStop(0.6, `rgba(${r},${g},${b},${layer.alpha * 0.6})`);
+                    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+
+                    ctx.strokeStyle = grad;
+                    ctx.lineWidth = layer.width;
+                    ctx.stroke();
+                }
+
+                // Glowing tip dot
+                const tip = segments[n - 1];
+                const tipPulse = 1 + Math.sin(t * 0.07 + tentacle.wigglePhase * 3) * 0.4;
+                const tipGrad = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 5 * tipPulse);
+                tipGrad.addColorStop(0, 'rgba(255, 240, 255, 0.95)');
+                tipGrad.addColorStop(0.4, 'rgba(200, 130, 255, 0.6)');
+                tipGrad.addColorStop(1, 'rgba(120, 40, 200, 0)');
+                ctx.beginPath();
+                ctx.arc(tip.x, tip.y, 5 * tipPulse, 0, Math.PI * 2);
+                ctx.fillStyle = tipGrad;
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            // ─── Main Loop ───────────────────────────────────────────────────────────────
+            let frame = 0;
+
+            function loop() {
+                requestAnimationFrame(loop);
+                frame++;
+
+                // Track mouse speed for behavior blending
+                const dx = mouse.x - lastMX;
+                const dy = mouse.y - lastMY;
+                mouseSpeed = Math.sqrt(dx * dx + dy * dy);
+                lastMX = mouse.x;
+                lastMY = mouse.y;
+
+                // Clear with deep space trail (full clear for crisper look)
+                ctx.clearRect(0, 0, W, H);
+
+                // Deep black background
+                ctx.fillStyle = '#000008';
+                ctx.fillRect(0, 0, W, H);
+
+                // Starfield
+                drawStars(frame);
+
+                // Deep ambient fog near head
+                const fog = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 180);
+                fog.addColorStop(0, 'rgba(80, 20, 140, 0.07)');
+                fog.addColorStop(0.5, 'rgba(40, 0, 80, 0.03)');
+                fog.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = fog;
+                ctx.fillRect(0, 0, W, H);
+
+                // Update + draw tentacles (behind core)
+                for (const t of tentacles) {
+                    updateTentacle(frame, t);
+                    drawTentacle(frame, t);
+                }
+
+                // Update + draw head
+                updateHead();
+                drawCore(frame);
+            }
+
+            loop();
+        })();
+    </script>
+</body>
+
+</html>
